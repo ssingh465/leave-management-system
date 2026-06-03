@@ -1,9 +1,9 @@
 """Seed loader that populates the Auth Service user store at startup.
 
-The system has no self-registration: a fixed set of identities is loaded into
-the in-memory store when the service boots. Each password is BCrypt-hashed
-here; the plain-text value exists only transiently to produce the hash and is
-never persisted.
+The system has no self-registration: a fixed set of identities (defined once
+in :mod:`shared.seed_config`) is loaded into the in-memory store when the
+service boots. Each password is BCrypt-hashed here; the plain-text value
+exists only transiently to produce the hash and is never persisted.
 
 Default seeded accounts (username / password):
     manager1 / Manager@123    role=MANAGER
@@ -13,21 +13,13 @@ Default seeded accounts (username / password):
 
 from __future__ import annotations
 
-import uuid
-
 from passlib.context import CryptContext
 
 from auth_service.models import User
 from auth_service.store import add_user, users_store
-from shared.enums import Role
+from shared.seed_config import SEED_USERS
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-_MANAGER = ("manager1", "Manager@123")
-_EMPLOYEES = [
-    ("emp1", "Employee@123"),
-    ("emp2", "Employee@123"),
-]
 
 
 def hash_password(plaintext: str) -> str:
@@ -43,27 +35,23 @@ def verify_password(plaintext: str, hashed: str) -> bool:
 
 
 def seed_users() -> None:
-    """Load the pre-defined accounts into the store (idempotent)."""
+    """Load the pre-defined accounts into the store (idempotent).
+
+    User ids come from :mod:`shared.seed_config` so they match the
+    ``employee_id`` and ``reporting_manager_id`` values used by the other
+    services.
+    """
 
     if users_store:
         return
 
-    manager = User(
-        user_id=str(uuid.uuid4()),
-        username=_MANAGER[0],
-        hashed_password=hash_password(_MANAGER[1]),
-        role=Role.MANAGER,
-        manager_id=None,
-    )
-    add_user(manager)
-
-    for username, password in _EMPLOYEES:
+    for seed_user in SEED_USERS:
         add_user(
             User(
-                user_id=str(uuid.uuid4()),
-                username=username,
-                hashed_password=hash_password(password),
-                role=Role.EMPLOYEE,
-                manager_id=manager.user_id,
+                user_id=seed_user.user_id,
+                username=seed_user.username,
+                hashed_password=hash_password(seed_user.password),
+                role=seed_user.role,
+                manager_id=seed_user.manager_id,
             )
         )
