@@ -9,17 +9,29 @@ rejecting one records a mandatory reason. The service holds no state of its own.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
 import httpx
+import pybreaker
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from manager_service import clients
 from manager_service.schemas import ManagerRequestView, RejectLeaveRequest
 from shared.auth_context import CallerIdentity, require_manager
-from shared.enums import LeaveStatus, LeaveType
+from shared.circuit_breakers import (
+    invoke_with_breaker,
+    leave_balance_cb,
+    leave_request_cb,
+)
+from shared.config import settings
+from shared.consul_client import deregister_service, register_service
+from shared.enums import LeaveStatus, LeaveType, NotificationEventType
+from shared.exception_handlers import register_global_exception_handler
+from shared.rabbitmq_publisher import publish_event
+from shared.tracing import init_tracing, instrument_fastapi, instrument_httpx
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,14 +44,24 @@ _UPSTREAM_TIMEOUT_SECONDS = 5.0
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_tracing(settings.service_name)
+    instrument_httpx()
+    register_service(
+        settings.service_name, settings.service_host, settings.service_port
+    )
     app.state.http_client = httpx.AsyncClient(timeout=_UPSTREAM_TIMEOUT_SECONDS)
     try:
         yield
     finally:
         await app.state.http_client.aclose()
+        deregister_service(
+            settings.service_name, settings.service_host, settings.service_port
+        )
 
 
 app = FastAPI(title="Manager Service", lifespan=lifespan)
+register_global_exception_handler(app)
+instrument_fastapi(app)
 
 
 async def _call(coro) -> httpx.Response:
@@ -47,6 +69,12 @@ async def _call(coro) -> httpx.Response:
 
     try:
         return await coro
+    except pybreaker.CircuitBreakerError as exc:
+        logger.warning("Downstream circuit breaker open")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="A downstream service is unavailable",
+        ) from exc
     except httpx.HTTPError as exc:
         logger.warning("Downstream call failed: %s", exc)
         raise HTTPException(
@@ -140,21 +168,36 @@ async def approve_request(
 
     # Deduct first so an insufficient balance aborts before any status change.
     deduct_response = await _call(
-        clients.deduct_balance(
-            client,
-            leave_request["employee_id"],
-            LeaveType(leave_request["leave_type"]),
-            leave_request["number_of_days"],
+        invoke_with_breaker(
+            leave_balance_cb,
+            lambda: clients.deduct_balance(
+                client,
+                leave_request["employee_id"],
+                LeaveType(leave_request["leave_type"]),
+                leave_request["number_of_days"],
+            ),
         )
     )
     _propagate(deduct_response)
 
     update_response = await _call(
-        clients.set_request_status(
-            client, request_id, caller.user_id, LeaveStatus.APPROVED
+        invoke_with_breaker(
+            leave_request_cb,
+            lambda: clients.set_request_status(
+                client, request_id, caller.user_id, LeaveStatus.APPROVED
+            ),
         )
     )
     updated = _propagate(update_response)
+    asyncio.create_task(
+        publish_event(
+            NotificationEventType.LEAVE_APPROVED,
+            {
+                "employee_id": leave_request["employee_id"],
+                "leave_request_id": request_id,
+            },
+        )
+    )
     logger.info("Manager %s approved request %s", caller.user_id, request_id)
     return ManagerRequestView.from_payload(updated)
 
@@ -183,15 +226,28 @@ async def reject_request(
         )
 
     update_response = await _call(
-        clients.set_request_status(
-            client,
-            request_id,
-            caller.user_id,
-            LeaveStatus.REJECTED,
-            rejection_reason=payload.rejection_reason,
+        invoke_with_breaker(
+            leave_request_cb,
+            lambda: clients.set_request_status(
+                client,
+                request_id,
+                caller.user_id,
+                LeaveStatus.REJECTED,
+                rejection_reason=payload.rejection_reason,
+            ),
         )
     )
     updated = _propagate(update_response)
+    asyncio.create_task(
+        publish_event(
+            NotificationEventType.LEAVE_REJECTED,
+            {
+                "employee_id": leave_request["employee_id"],
+                "leave_request_id": request_id,
+                "reason": payload.rejection_reason,
+            },
+        )
+    )
     logger.info("Manager %s rejected request %s", caller.user_id, request_id)
     return ManagerRequestView.from_payload(updated)
 

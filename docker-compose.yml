@@ -1,15 +1,9 @@
 # ============================================================================
 # Leave Management System - docker-compose.yml
 # ----------------------------------------------------------------------------
-# Brings up the infrastructure (Consul + RabbitMQ) and the application
-# services that are runnable today: API Gateway, Auth, Leave Balance, Leave
-# Request, and Manager. The Notification Service stays a commented stub until
-# it gains its consumer entry point.
-#
-# Only the gateway publishes a host port (8080); every other service is reached
-# through it over the internal `leave-mgmt-net` network. Service discovery is
-# not wired up yet, so the gateway resolves downstreams via the static hostname
-# map, which matches the compose service names below.
+# Brings up the infrastructure (Consul + RabbitMQ) and all six application
+# services. Only the gateway publishes a host port (8080); every other service
+# is reached through it over the internal `leave-mgmt-net` network.
 #
 # Usage:
 #     docker-compose up consul rabbitmq      # infrastructure only
@@ -79,6 +73,8 @@ services:
       leave-request-service:
         condition: service_started
       manager-service:
+        condition: service_started
+      notification-service:
         condition: service_started
     networks:
       - leave-mgmt-net
@@ -161,23 +157,23 @@ services:
     networks:
       - leave-mgmt-net
 
-  # notification-service (enabled once its consumer entry point exists):
-  #   build:
-  #     context: .
-  #     dockerfile: notification_service/Dockerfile
-  #   container_name: leave-mgmt-notification-service
-  #   env_file: .env
-  #   environment:
-  #     SERVICE_NAME: notification-service
-  #     SERVICE_HOST: notification-service
-  #     SERVICE_PORT: 8005
-  #   depends_on:
-  #     consul:
-  #       condition: service_healthy
-  #     rabbitmq:
-  #       condition: service_healthy
-  #   networks:
-  #     - leave-mgmt-net
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification_service/Dockerfile
+    container_name: leave-mgmt-notification-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: notification-service
+      SERVICE_HOST: notification-service
+      SERVICE_PORT: 8005
+    depends_on:
+      consul:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - leave-mgmt-net
 
 networks:
   leave-mgmt-net:

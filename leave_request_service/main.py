@@ -9,6 +9,7 @@ network to power team views and approve/reject.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ from datetime import date
 from typing import Optional
 
 import httpx
+import pybreaker
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from leave_request_service import balance_client
@@ -36,8 +38,14 @@ from leave_request_service.store import (
 )
 from leave_request_service.validators import check_overlap, validate_dates
 from shared.auth_context import CallerIdentity, get_caller
-from shared.enums import LeaveStatus
+from shared.circuit_breakers import invoke_with_breaker, leave_balance_cb
+from shared.config import settings
+from shared.consul_client import deregister_service, register_service
+from shared.enums import LeaveStatus, NotificationEventType
+from shared.exception_handlers import register_global_exception_handler
+from shared.rabbitmq_publisher import publish_event
 from shared.seed_config import get_manager_id
+from shared.tracing import init_tracing, instrument_fastapi, instrument_httpx
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,14 +58,24 @@ _UPSTREAM_TIMEOUT_SECONDS = 5.0
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_tracing(settings.service_name)
+    instrument_httpx()
+    register_service(
+        settings.service_name, settings.service_host, settings.service_port
+    )
     app.state.http_client = httpx.AsyncClient(timeout=_UPSTREAM_TIMEOUT_SECONDS)
     try:
         yield
     finally:
         await app.state.http_client.aclose()
+        deregister_service(
+            settings.service_name, settings.service_host, settings.service_port
+        )
 
 
 app = FastAPI(title="Leave Request Service", lifespan=lifespan)
+register_global_exception_handler(app)
+instrument_fastapi(app)
 
 
 def _resolve_manager(employee_id: str, provided: Optional[str]) -> str:
@@ -97,9 +115,18 @@ async def apply_leave(
     check_overlap(caller.user_id, payload.start_date, payload.end_date)
 
     try:
-        remaining = await balance_client.fetch_remaining(
-            request.app.state.http_client, caller.user_id, payload.leave_type
+        remaining = await invoke_with_breaker(
+            leave_balance_cb,
+            lambda: balance_client.fetch_remaining(
+                request.app.state.http_client, caller.user_id, payload.leave_type
+            ),
         )
+    except pybreaker.CircuitBreakerError as exc:
+        logger.warning("Balance lookup circuit open for %s", caller.user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Leave Balance Service is unavailable",
+        ) from exc
     except httpx.HTTPError as exc:
         logger.warning("Balance lookup failed for %s: %s", caller.user_id, exc)
         raise HTTPException(
@@ -127,6 +154,16 @@ async def apply_leave(
         reporting_manager_id=manager_id,
     )
     add_request(leave_request)
+    asyncio.create_task(
+        publish_event(
+            NotificationEventType.LEAVE_APPLIED,
+            {
+                "employee_id": caller.user_id,
+                "manager_id": manager_id,
+                "leave_request_id": leave_request.request_id,
+            },
+        )
+    )
     logger.info(
         "Leave request %s created for employee %s (%s, %d day(s))",
         leave_request.request_id,

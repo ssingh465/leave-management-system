@@ -23,8 +23,12 @@ from leave_balance_service.schemas import (
 from leave_balance_service.seed import seed_balances
 from leave_balance_service.store import apply_deduction, get_balances_for_employee
 from shared.auth_context import CallerIdentity, get_caller
+from shared.config import settings
+from shared.consul_client import deregister_service, register_service
 from shared.enums import Role
+from shared.exception_handlers import register_global_exception_handler
 from shared.seed_config import is_team_member
+from shared.tracing import init_tracing, instrument_fastapi
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,11 +39,22 @@ logger = logging.getLogger("leave_balance_service")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_tracing(settings.service_name)
+    register_service(
+        settings.service_name, settings.service_host, settings.service_port
+    )
     seed_balances()
-    yield
+    try:
+        yield
+    finally:
+        deregister_service(
+            settings.service_name, settings.service_host, settings.service_port
+        )
 
 
 app = FastAPI(title="Leave Balance Service", lifespan=lifespan)
+register_global_exception_handler(app)
+instrument_fastapi(app)
 
 
 def _balances_response(employee_id: str) -> EmployeeBalancesResponse:
