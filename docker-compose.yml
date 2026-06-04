@@ -5,9 +5,15 @@
 # services. Only the gateway publishes a host port (8080); every other service
 # is reached through it over the internal `leave-mgmt-net` network.
 #
+# Each application service declares BOTH a `build:` context (so you can rebuild
+# from source) AND an `image:` tag (so you can pull pre-built images from
+# Docker Hub). The image name is derived from DOCKERHUB_USERNAME and IMAGE_TAG
+# in `.env`; defaults keep the file usable without any environment overrides.
+#
 # Usage:
 #     docker-compose up consul rabbitmq      # infrastructure only
-#     docker-compose up --build              # full system
+#     docker-compose up --build              # build from source and run
+#     docker-compose pull && docker-compose up   # pull from Docker Hub and run
 # ============================================================================
 
 services:
@@ -50,6 +56,7 @@ services:
   # Application services
   # --------------------------------------------------------------------------
   api-gateway:
+    image: ${DOCKERHUB_USERNAME:-your-dockerhub-username}/elms-api-gateway:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: api_gateway/Dockerfile
@@ -80,6 +87,7 @@ services:
       - leave-mgmt-net
 
   auth-service:
+    image: ${DOCKERHUB_USERNAME:-your-dockerhub-username}/elms-auth-service:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: auth_service/Dockerfile
@@ -98,6 +106,7 @@ services:
       - leave-mgmt-net
 
   leave-balance-service:
+    image: ${DOCKERHUB_USERNAME:-your-dockerhub-username}/elms-leave-balance-service:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: leave_balance_service/Dockerfile
@@ -116,6 +125,7 @@ services:
       - leave-mgmt-net
 
   leave-request-service:
+    image: ${DOCKERHUB_USERNAME:-your-dockerhub-username}/elms-leave-request-service:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: leave_request_service/Dockerfile
@@ -136,6 +146,7 @@ services:
       - leave-mgmt-net
 
   manager-service:
+    image: ${DOCKERHUB_USERNAME:-your-dockerhub-username}/elms-manager-service:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: manager_service/Dockerfile
@@ -158,6 +169,7 @@ services:
       - leave-mgmt-net
 
   notification-service:
+    image: ${DOCKERHUB_USERNAME:-your-dockerhub-username}/elms-notification-service:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: notification_service/Dockerfile
