@@ -1,0 +1,2486 @@
+{
+  "info": {
+    "_postman_id": "elms-collection-2026",
+    "name": "ELMS - Employee Leave Management System",
+    "description": "End-to-end test collection for the ELMS backend (6 services). Run as a Collection so requests flow in order: Auth populates tokens, Apply Leave populates request IDs, then Approve/Reject/Cancel exercise the lifecycle. All requests target the API Gateway at {{baseUrl}}.\n\nPrerequisites: docker-compose up --build, all 8 containers healthy.\n\nSeed identities (see shared/seed_config.py):\n- manager1 / Manager@123  (id 00000000-0000-0000-0000-000000000001)\n- emp1     / Employee@123 (id 00000000-0000-0000-0000-000000000002, reports to manager1)\n- emp2     / Employee@123 (id 00000000-0000-0000-0000-000000000003, reports to manager1)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Compute date variables relative to today (UTC) so success/overlap/past-date",
+          "// scenarios are stable no matter when the collection is run.",
+          "const fmt = function (d) { return d.toISOString().slice(0, 10); };",
+          "const add = function (n) {",
+          "  const d = new Date();",
+          "  d.setUTCDate(d.getUTCDate() + n);",
+          "  return d;",
+          "};",
+          "pm.collectionVariables.set('today', fmt(new Date()));",
+          "pm.collectionVariables.set('past_start', fmt(add(-5)));",
+          "pm.collectionVariables.set('past_end',   fmt(add(-3)));",
+          "// Range A: 3 days CASUAL for emp1 (success + overlap tests).",
+          "pm.collectionVariables.set('range_a_start', fmt(add(14)));",
+          "pm.collectionVariables.set('range_a_end',   fmt(add(16)));",
+          "// Range B: 2 days PRIVILEGE for emp1 (reject test).",
+          "pm.collectionVariables.set('range_b_start', fmt(add(21)));",
+          "pm.collectionVariables.set('range_b_end',   fmt(add(22)));",
+          "// Range C: 1 day SICK for emp1 (cancel test).",
+          "pm.collectionVariables.set('range_c_start', fmt(add(28)));",
+          "pm.collectionVariables.set('range_c_end',   fmt(add(28)));",
+          "// Range D: 11 days SICK (insufficient-balance test, since SICK total = 10).",
+          "pm.collectionVariables.set('range_d_start', fmt(add(35)));",
+          "pm.collectionVariables.set('range_d_end',   fmt(add(45)));",
+          "// Range E: 1 day used for the manager-id mismatch and circuit-breaker tests.",
+          "pm.collectionVariables.set('range_e_start', fmt(add(50)));",
+          "pm.collectionVariables.set('range_e_end',   fmt(add(50)));"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "manager_id",
+      "value": "00000000-0000-0000-0000-000000000001",
+      "type": "string"
+    },
+    {
+      "key": "emp1_id",
+      "value": "00000000-0000-0000-0000-000000000002",
+      "type": "string"
+    },
+    {
+      "key": "emp2_id",
+      "value": "00000000-0000-0000-0000-000000000003",
+      "type": "string"
+    },
+    {
+      "key": "fake_id",
+      "value": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "type": "string"
+    },
+    {
+      "key": "manager_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "emp1_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "emp2_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pending_request_id_1",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pending_request_id_2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pending_request_id_3",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "today",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "past_start",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "past_end",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_a_start",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_a_end",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_b_start",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_b_end",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_c_start",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_c_end",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_d_start",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_d_end",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_e_start",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "range_e_end",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Authentication",
+      "description": "POST /auth/login is the only public endpoint. Returns an HS256 JWT carrying sub (user id) and role. Bad creds and unknown users both return 401 with the same generic message (so the API does not leak which accounts exist).",
+      "item": [
+        {
+          "name": "Login - Manager",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"manager1\",\n  \"password\": \"Manager@123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Response carries an access_token', function () {",
+                  "  pm.expect(body.access_token).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.token_type).to.eql('bearer');",
+                  "});",
+                  "pm.collectionVariables.set('manager_token', body.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - Employee 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"emp1\",\n  \"password\": \"Employee@123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.access_token).to.be.a('string').and.not.empty;",
+                  "pm.collectionVariables.set('emp1_token', body.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - Employee 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"emp2\",\n  \"password\": \"Employee@123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.access_token).to.be.a('string').and.not.empty;",
+                  "pm.collectionVariables.set('emp2_token', body.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - Wrong Password (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"emp1\",\n  \"password\": \"wrong-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('Generic error detail', function () {",
+                  "  pm.expect(pm.response.json().detail).to.match(/invalid/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - Unknown User (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"ghost\",\n  \"password\": \"irrelevant\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login - Missing Field (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"emp1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', function () { pm.response.to.have.status(422); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Leave Balance",
+      "description": "GET /employees/me/balances returns the caller's own balances. GET /employees/{id}/balances enforces RBAC: an employee may read only their own; a manager may additionally read direct reports. Each seeded employee starts with CASUAL=12, SICK=10, PRIVILEGE=15.",
+      "item": [
+        {
+          "name": "My Balances - Employee 1 (200, 3 entries)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/employees/me/balances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                "me",
+                "balances"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('employee_id matches emp1', function () {",
+                  "  pm.expect(body.employee_id).to.eql(pm.collectionVariables.get('emp1_id'));",
+                  "});",
+                  "pm.test('Three balance records seeded with the canonical allocations', function () {",
+                  "  pm.expect(body.balances).to.have.lengthOf(3);",
+                  "  const byType = {};",
+                  "  body.balances.forEach(function (b) { byType[b.leave_type] = b; });",
+                  "  pm.expect(byType.CASUAL.total_allocated).to.eql(12);",
+                  "  pm.expect(byType.SICK.total_allocated).to.eql(10);",
+                  "  pm.expect(byType.PRIVILEGE.total_allocated).to.eql(15);",
+                  "  body.balances.forEach(function (b) {",
+                  "    pm.expect(b.remaining).to.eql(b.total_allocated - b.used);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My Balances - Manager (200, empty list)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/employees/me/balances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                "me",
+                "balances"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Manager has no balance records', function () {",
+                  "  pm.expect(pm.response.json().balances).to.have.lengthOf(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Specific Balances - Self (200)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/employees/{{emp1_id}}/balances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                "{{emp1_id}}",
+                "balances"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Specific Balances - Manager Reading Direct Report (200)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/employees/{{emp1_id}}/balances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                "{{emp1_id}}",
+                "balances"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Returns balances for the requested employee', function () {",
+                  "  pm.expect(pm.response.json().employee_id).to.eql(pm.collectionVariables.get('emp1_id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Specific Balances - Employee Reading Another Employee (403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/employees/{{emp2_id}}/balances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                "{{emp2_id}}",
+                "balances"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Specific Balances - Manager Reading Outside Team (403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/employees/{{fake_id}}/balances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                "{{fake_id}}",
+                "balances"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Specific Balances - No Auth Header (401)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/employees/me/balances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                "me",
+                "balances"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Apply Leave",
+      "description": "POST /leaves runs the four business validations in order: (1) start_date <= end_date - 400, (2) start_date >= today - 400, (3) number_of_days == inclusive day count - 400, (4) no overlap with existing PENDING/APPROVED requests - 409. After they pass, the service calls Leave Balance over httpx and returns 409 if balance is insufficient. Pydantic returns 422 for structural problems (missing/wrong-typed fields, days <= 0).",
+      "item": [
+        {
+          "name": "Apply Casual 3d - Success (201)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"CASUAL\",\n  \"start_date\": \"{{range_a_start}}\",\n  \"end_date\": \"{{range_a_end}}\",\n  \"number_of_days\": 3,\n  \"reason\": \"Family event\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Status is PENDING and routed to manager1', function () {",
+                  "  pm.expect(body.status).to.eql('PENDING');",
+                  "  pm.expect(body.reporting_manager_id).to.eql(pm.collectionVariables.get('manager_id'));",
+                  "  pm.expect(body.employee_id).to.eql(pm.collectionVariables.get('emp1_id'));",
+                  "});",
+                  "pm.collectionVariables.set('pending_request_id_1', body.request_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Apply - Date Range Inverted (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"CASUAL\",\n  \"start_date\": \"{{range_a_end}}\",\n  \"end_date\": \"{{range_a_start}}\",\n  \"number_of_days\": 3,\n  \"reason\": \"Inverted range\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request (start > end)', function () { pm.response.to.have.status(400); });",
+                  "pm.expect(pm.response.json().detail).to.match(/start_date.*not.*after.*end_date/i);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Apply - Past Start Date (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"CASUAL\",\n  \"start_date\": \"{{past_start}}\",\n  \"end_date\": \"{{past_end}}\",\n  \"number_of_days\": 3,\n  \"reason\": \"Backdated\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request (past date)', function () { pm.response.to.have.status(400); });",
+                  "pm.expect(pm.response.json().detail).to.match(/past/i);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Apply - Day Count Mismatch (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"CASUAL\",\n  \"start_date\": \"{{range_a_start}}\",\n  \"end_date\": \"{{range_a_end}}\",\n  \"number_of_days\": 5,\n  \"reason\": \"Wrong day count\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request (day count mismatch)', function () { pm.response.to.have.status(400); });",
+                  "pm.expect(pm.response.json().detail).to.match(/number_of_days/i);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Apply - Overlap (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"SICK\",\n  \"start_date\": \"{{range_a_start}}\",\n  \"end_date\": \"{{range_a_end}}\",\n  \"number_of_days\": 3,\n  \"reason\": \"Overlapping with existing pending request\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict (overlap)', function () { pm.response.to.have.status(409); });",
+                  "pm.expect(pm.response.json().detail).to.match(/overlap/i);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Apply - Insufficient Balance (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"SICK\",\n  \"start_date\": \"{{range_d_start}}\",\n  \"end_date\": \"{{range_d_end}}\",\n  \"number_of_days\": 11,\n  \"reason\": \"Long sickness (exceeds 10-day SICK allocation)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict (insufficient balance)', function () { pm.response.to.have.status(409); });",
+                  "pm.expect(pm.response.json().detail).to.match(/insufficient/i);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Apply - Reporting Manager Mismatch (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"CASUAL\",\n  \"start_date\": \"{{range_e_start}}\",\n  \"end_date\": \"{{range_e_end}}\",\n  \"number_of_days\": 1,\n  \"reason\": \"Trying to bypass real manager\",\n  \"reporting_manager_id\": \"{{fake_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request (manager mismatch)', function () { pm.response.to.have.status(400); });",
+                  "pm.expect(pm.response.json().detail).to.match(/reporting_manager_id/i);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Apply - Negative Days (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"CASUAL\",\n  \"start_date\": \"{{range_a_start}}\",\n  \"end_date\": \"{{range_a_end}}\",\n  \"number_of_days\": -3,\n  \"reason\": \"Negative days violates Pydantic Field(gt=0)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', function () { pm.response.to.have.status(422); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Apply - No Auth (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"CASUAL\",\n  \"start_date\": \"{{range_a_start}}\",\n  \"end_date\": \"{{range_a_end}}\",\n  \"number_of_days\": 3,\n  \"reason\": \"No token\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 - History",
+      "description": "GET /leaves/history is the caller's own history with optional ?status filter (PENDING/APPROVED/REJECTED/CANCELLED/ALL) and page/page_size pagination. Invalid status values return 400.",
+      "item": [
+        {
+          "name": "My History - Default",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Pagination envelope is well-formed', function () {",
+                  "  pm.expect(body).to.have.all.keys('items', 'page', 'page_size', 'total', 'total_pages');",
+                  "  pm.expect(body.page).to.eql(1);",
+                  "  pm.expect(body.page_size).to.eql(10);",
+                  "});",
+                  "pm.test('Includes the pending request created earlier', function () {",
+                  "  const ids = body.items.map(function (i) { return i.request_id; });",
+                  "  pm.expect(ids).to.include(pm.collectionVariables.get('pending_request_id_1'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My History - status=PENDING",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history?status=PENDING",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('All returned items are PENDING', function () {",
+                  "  body.items.forEach(function (i) { pm.expect(i.status).to.eql('PENDING'); });",
+                  "  pm.expect(body.items.length).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My History - status=APPROVED (initially empty)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history?status=APPROVED",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "APPROVED"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('No APPROVED items yet', function () {",
+                  "  pm.expect(pm.response.json().items).to.have.lengthOf(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My History - status=ALL",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history?status=ALL",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "ALL"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My History - Invalid Status (400)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history?status=BOGUS",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "BOGUS"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My History - Pagination (page_size=1)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history?page=1&page_size=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "1"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Page envelope reflects requested size', function () {",
+                  "  pm.expect(body.page_size).to.eql(1);",
+                  "  pm.expect(body.items.length).to.be.at.most(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 - Manager: View",
+      "description": "GET /manager/requests is manager-only (require_manager dependency returns 403 for employees). Results are scoped to the calling manager's team and support optional status / employee_id / from_date / to_date filters.",
+      "item": [
+        {
+          "name": "List Team Requests - Employee (403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden (employees may not list manager requests)', function () {",
+                  "  pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Team Requests - Manager (200)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const items = pm.response.json();",
+                  "pm.test('Pending request from emp1 is visible', function () {",
+                  "  const ids = items.map(function (i) { return i.request_id; });",
+                  "  pm.expect(ids).to.include(pm.collectionVariables.get('pending_request_id_1'));",
+                  "});",
+                  "pm.test('Each row carries employee_name from the org chart', function () {",
+                  "  items.forEach(function (i) { pm.expect(i.employee_name).to.be.a('string'); });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Team Requests - status=PENDING",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests?status=PENDING",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.response.json().forEach(function (i) {",
+                  "  pm.expect(i.status).to.eql('PENDING');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Team Requests - employee_id=emp1",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests?employee_id={{emp1_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests"
+              ],
+              "query": [
+                {
+                  "key": "employee_id",
+                  "value": "{{emp1_id}}"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.response.json().forEach(function (i) {",
+                  "  pm.expect(i.employee_id).to.eql(pm.collectionVariables.get('emp1_id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 - Manager: Approve",
+      "description": "Approving a PENDING request orchestrates two downstream calls: (1) deduct days from the employee's balance via the Leave Balance Service, then (2) flip the request to APPROVED on the Leave Request Service. Both calls are wrapped in pybreaker circuit breakers.",
+      "item": [
+        {
+          "name": "Approve Pending #1 (200, balance deducted)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests/{{pending_request_id_1}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests",
+                "{{pending_request_id_1}}",
+                "approve"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Status flipped to APPROVED', function () {",
+                  "  pm.expect(body.status).to.eql('APPROVED');",
+                  "  pm.expect(body.request_id).to.eql(pm.collectionVariables.get('pending_request_id_1'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve Same Request Again (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests/{{pending_request_id_1}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests",
+                "{{pending_request_id_1}}",
+                "approve"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict (only PENDING requests can be approved)', function () {",
+                  "  pm.response.to.have.status(409);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify Balance Deducted (CASUAL used=3, remaining=9)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/employees/me/balances",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                "me",
+                "balances"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const casual = pm.response.json().balances.find(function (b) {",
+                  "  return b.leave_type === 'CASUAL';",
+                  "});",
+                  "pm.test('CASUAL used=3, remaining=9', function () {",
+                  "  pm.expect(casual.used).to.eql(3);",
+                  "  pm.expect(casual.remaining).to.eql(9);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve Unknown Request ID (404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests/{{fake_id}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests",
+                "{{fake_id}}",
+                "approve"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 - Manager: Reject",
+      "description": "Rejecting a PENDING request requires a non-empty rejection_reason (Pydantic min_length=1). Already-decided requests return 409. This folder first creates a fresh PENDING request to reject.",
+      "item": [
+        {
+          "name": "Apply 2nd Leave - Privilege 2d (201, captures id_2)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"PRIVILEGE\",\n  \"start_date\": \"{{range_b_start}}\",\n  \"end_date\": \"{{range_b_end}}\",\n  \"number_of_days\": 2,\n  \"reason\": \"Trip planning\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('pending_request_id_2', pm.response.json().request_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject - Empty Reason (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests/{{pending_request_id_2}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests",
+                "{{pending_request_id_2}}",
+                "reject"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejection_reason\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity (rejection_reason min_length=1)', function () {",
+                  "  pm.response.to.have.status(422);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject - Missing Reason Body (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests/{{pending_request_id_2}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests",
+                "{{pending_request_id_2}}",
+                "reject"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', function () { pm.response.to.have.status(422); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject Pending #2 (200)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests/{{pending_request_id_2}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests",
+                "{{pending_request_id_2}}",
+                "reject"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejection_reason\": \"Conflicts with team launch\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Status flipped to REJECTED with reason recorded', function () {",
+                  "  pm.expect(body.status).to.eql('REJECTED');",
+                  "  pm.expect(body.rejection_reason).to.eql('Conflicts with team launch');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject Already Rejected (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{manager_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/manager/requests/{{pending_request_id_2}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "manager",
+                "requests",
+                "{{pending_request_id_2}}",
+                "reject"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejection_reason\": \"Trying again\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict (only PENDING can be rejected)', function () {",
+                  "  pm.response.to.have.status(409);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 - Cancel Leave",
+      "description": "PATCH /leaves/{id}/cancel lets the owner cancel their PENDING request. 404 for unknown ids, 403 for someone else's request, 409 if the request is no longer PENDING.",
+      "item": [
+        {
+          "name": "Apply 3rd Leave - Sick 1d (201, captures id_3)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"SICK\",\n  \"start_date\": \"{{range_c_start}}\",\n  \"end_date\": \"{{range_c_end}}\",\n  \"number_of_days\": 1,\n  \"reason\": \"Doctor visit\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('pending_request_id_3', pm.response.json().request_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel - Not Owner (403)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp2_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/{{pending_request_id_3}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "{{pending_request_id_3}}",
+                "cancel"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden (emp2 cannot cancel emp1 request)', function () {",
+                  "  pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel - Unknown ID (404)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/{{fake_id}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "{{fake_id}}",
+                "cancel"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel - No Auth (401)",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/{{pending_request_id_3}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "{{pending_request_id_3}}",
+                "cancel"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Pending #3 (200)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/{{pending_request_id_3}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "{{pending_request_id_3}}",
+                "cancel"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Status flipped to CANCELLED', function () {",
+                  "  pm.expect(pm.response.json().status).to.eql('CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Already Cancelled (409)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/{{pending_request_id_3}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "{{pending_request_id_3}}",
+                "cancel"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict (only PENDING can be cancelled)', function () {",
+                  "  pm.response.to.have.status(409);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09 - Cross-Cutting",
+      "description": "Smoke checks for the platform-wide concerns: gateway health, the three flavours of 401 produced by the auth middleware, and the manual procedures for verifying the circuit breaker, OpenTelemetry tracing, and SYSTEM_ERROR publishing.",
+      "item": [
+        {
+          "name": "Gateway /health (200)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.expect(pm.response.json().status).to.eql('ok');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Protected Route - No Auth Header (401)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('WWW-Authenticate header advertises Bearer scheme', function () {",
+                  "  pm.expect(pm.response.headers.get('WWW-Authenticate')).to.match(/Bearer/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Protected Route - Malformed Authorization (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "NotBearer abcdef"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Protected Route - Invalid Token (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer not.a.real.token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Circuit Breaker - 503 (manual)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type\": \"CASUAL\",\n  \"start_date\": \"{{range_e_start}}\",\n  \"end_date\": \"{{range_e_end}}\",\n  \"number_of_days\": 1,\n  \"reason\": \"Circuit-breaker probe\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "MANUAL test. Stop the leave-balance-service container, then send this request 5+ times in quick succession. The first few requests fail with 503 from the apply_leave endpoint catching httpx.HTTPError; once the breaker trips (failure threshold = 3), subsequent requests short-circuit with the same 503 but log 'Balance lookup circuit open'.\n\nSteps:\n  1) docker-compose stop leave-balance-service\n  2) Send this request several times until the breaker opens\n  3) docker-compose logs leave-request-service | grep 'circuit'\n  4) docker-compose start leave-balance-service\n"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('503 Service Unavailable when balance service is down', function () {",
+                  "  pm.expect([503, 504, 201]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 503) {",
+                  "  pm.expect(pm.response.json().detail).to.match(/unavailable/i);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OpenTelemetry Tracing (manual)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{emp1_token}}"
+              },
+              {
+                "key": "traceparent",
+                "value": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "history"
+              ]
+            },
+            "description": "MANUAL verification. The OpenTelemetry SDK in shared/tracing.py exports spans via the ConsoleSpanExporter to each service's stdout. After running this request:\n\n  docker-compose logs api-gateway leave-request-service | grep -i span\n\nYou should see correlated spans (api-gateway -> leave-request-service) carrying the trace_id from the traceparent header above."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "SYSTEM_ERROR Publishing (manual)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "MANUAL verification. The global exception handler in shared/exception_handlers.py publishes a SYSTEM_ERROR event to RabbitMQ whenever an unhandled exception escapes a route. The Notification Service consumer logs:\n\n  [NOTIFICATION] SYSTEM_ERROR: <service>/<route> -> <message>\n\nTo trigger one: temporarily raise an unexpected exception in any route, hit it via this collection, and observe:\n\n  docker-compose logs notification-service | grep SYSTEM_ERROR\n\nThe event payload mirrors the published JSON in shared/rabbitmq_publisher.py."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gateway is reachable', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
