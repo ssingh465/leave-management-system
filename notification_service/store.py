@@ -3,7 +3,7 @@
 Records are only ever inserted - never updated or deleted - so the list is a
 complete, immutable audit trail of every notification event consumed from
 RabbitMQ. Lightweight lookup helpers support filtering by event type, target
-employee, and related leave request (mirroring the schema indexes).
+employee, and related leave request (mirroring the store's lookup indexes).
 """
 
 from __future__ import annotations

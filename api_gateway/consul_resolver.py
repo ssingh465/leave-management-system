@@ -4,8 +4,8 @@ The gateway never hard-codes downstream addresses into its route handlers.
 Instead each route asks this module for the base URL of a logical service
 (``auth-service``, ``leave-balance-service``, ...). Resolution is attempted
 against Consul's health API first, so that once the services register
-themselves (Phase 6) the gateway automatically discovers healthy instances
-and load-balances across them.
+themselves the gateway automatically discovers healthy instances and
+load-balances across them.
 
 Until Consul registration exists, and whenever Consul has no healthy entry
 for a service, resolution falls back to a static map of Docker Compose

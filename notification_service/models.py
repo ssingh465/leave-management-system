@@ -4,7 +4,7 @@ Each record captures one event consumed from RabbitMQ. The Notification
 Service is intentionally decoupled: ``employee_id``, ``manager_id``, and
 ``leave_request_id`` are plain data carried in the event payload, not enforced
 foreign keys. Which fields are populated depends on ``event_type`` (see the
-schema's event-to-log mapping).
+event-to-log mapping).
 """
 
 from __future__ import annotations

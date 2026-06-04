@@ -4,7 +4,7 @@ Holds every :class:`~leave_balance_service.models.LeaveBalance` keyed by
 ``balance_id`` plus a composite ``(employee_id, leave_type) -> balance_id``
 index that backs both the per-employee balance read and the approval-time
 deduction lookup. The composite index also enforces the
-one-record-per-employee-per-leave-type uniqueness rule from the schema.
+one-record-per-employee-per-leave-type uniqueness rule.
 """
 
 from __future__ import annotations
@@ -48,3 +48,30 @@ def get_balances_for_employee(employee_id: str) -> list[LeaveBalance]:
         for balance in balances_store.values()
         if balance.employee_id == employee_id
     ]
+
+
+def apply_deduction(
+    employee_id: str, leave_type: LeaveType, days: int
+) -> LeaveBalance:
+    """Deduct ``days`` from an employee's balance for ``leave_type``.
+
+    Increments ``used`` only when the record exists and has enough remaining
+    days. Raises :class:`LookupError` when no such balance record exists and
+    :class:`ValueError` when the deduction would overdraw the balance, so the
+    caller can map them to the right HTTP status (404 / 409 respectively).
+    """
+
+    balance = get_balance(employee_id, leave_type)
+    if balance is None:
+        raise LookupError(
+            f"No {leave_type.value} balance for employee {employee_id}"
+        )
+    if days <= 0:
+        raise ValueError("Deduction must be a positive number of days")
+    if days > balance.remaining:
+        raise ValueError(
+            f"Insufficient {leave_type.value} balance: requested {days}, "
+            f"remaining {balance.remaining}"
+        )
+    balance.used += days
+    return balance

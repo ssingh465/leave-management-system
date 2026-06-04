@@ -72,3 +72,43 @@ def get_seed_employees() -> list[SeedUser]:
     """Return the seeded users whose role is ``EMPLOYEE``."""
 
     return [user for user in SEED_USERS if user.role == Role.EMPLOYEE]
+
+
+# user_id -> SeedUser index, built once so cross-service lookups (team scoping,
+# reporting-manager resolution, username enrichment) are O(1).
+_USERS_BY_ID: dict[str, SeedUser] = {user.user_id: user for user in SEED_USERS}
+
+
+def get_user(user_id: str) -> Optional[SeedUser]:
+    """Resolve a seeded user by id, or ``None`` if no such user exists."""
+
+    return _USERS_BY_ID.get(user_id)
+
+
+def get_manager_id(employee_id: str) -> Optional[str]:
+    """Return the reporting-manager id for an employee, or ``None``.
+
+    Because the platform has no self-registration, the seed data is the
+    complete, authoritative org chart; every service can rely on it to map an
+    employee to their approving manager without a cross-service call.
+    """
+
+    user = _USERS_BY_ID.get(employee_id)
+    return user.manager_id if user else None
+
+
+def is_team_member(manager_id: str, employee_id: str) -> bool:
+    """Return ``True`` if ``employee_id`` reports to ``manager_id``."""
+
+    user = _USERS_BY_ID.get(employee_id)
+    return bool(user and user.manager_id == manager_id)
+
+
+def get_team_member_ids(manager_id: str) -> list[str]:
+    """Return the ids of every employee reporting to ``manager_id``."""
+
+    return [
+        user.user_id
+        for user in SEED_USERS
+        if user.manager_id == manager_id
+    ]

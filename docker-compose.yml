@@ -1,10 +1,15 @@
 # ============================================================================
 # Leave Management System - docker-compose.yml
 # ----------------------------------------------------------------------------
-# Currently brings up only the infrastructure: Consul (service discovery)
-# and RabbitMQ (message broker). The six application service entries are
-# included below as commented stubs and will be enabled once each service
-# has its Dockerfile in place.
+# Brings up the infrastructure (Consul + RabbitMQ) and the application
+# services that are runnable today: API Gateway, Auth, Leave Balance, Leave
+# Request, and Manager. The Notification Service stays a commented stub until
+# it gains its consumer entry point.
+#
+# Only the gateway publishes a host port (8080); every other service is reached
+# through it over the internal `leave-mgmt-net` network. Service discovery is
+# not wired up yet, so the gateway resolves downstreams via the static hostname
+# map, which matches the compose service names below.
 #
 # Usage:
 #     docker-compose up consul rabbitmq      # infrastructure only
@@ -48,101 +53,115 @@ services:
       retries: 5
 
   # --------------------------------------------------------------------------
-  # Application services (stubs - enabled once each service has a Dockerfile)
+  # Application services
   # --------------------------------------------------------------------------
-  # api-gateway:
-  #   build:
-  #     context: .
-  #     dockerfile: api_gateway/Dockerfile
-  #   container_name: leave-mgmt-api-gateway
-  #   ports:
-  #     - "8080:8080"
-  #   env_file: .env
-  #   environment:
-  #     SERVICE_NAME: api-gateway
-  #     SERVICE_HOST: api-gateway
-  #     SERVICE_PORT: 8080
-  #   depends_on:
-  #     consul:
-  #       condition: service_healthy
-  #     rabbitmq:
-  #       condition: service_healthy
-  #   networks:
-  #     - leave-mgmt-net
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api_gateway/Dockerfile
+    container_name: leave-mgmt-api-gateway
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      SERVICE_NAME: api-gateway
+      SERVICE_HOST: api-gateway
+      SERVICE_PORT: 8080
+    depends_on:
+      consul:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      leave-balance-service:
+        condition: service_started
+      leave-request-service:
+        condition: service_started
+      manager-service:
+        condition: service_started
+    networks:
+      - leave-mgmt-net
 
-  # auth-service:
-  #   build:
-  #     context: .
-  #     dockerfile: auth_service/Dockerfile
-  #   container_name: leave-mgmt-auth-service
-  #   env_file: .env
-  #   environment:
-  #     SERVICE_NAME: auth-service
-  #     SERVICE_HOST: auth-service
-  #     SERVICE_PORT: 8001
-  #   depends_on:
-  #     consul:
-  #       condition: service_healthy
-  #     rabbitmq:
-  #       condition: service_healthy
-  #   networks:
-  #     - leave-mgmt-net
+  auth-service:
+    build:
+      context: .
+      dockerfile: auth_service/Dockerfile
+    container_name: leave-mgmt-auth-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: auth-service
+      SERVICE_HOST: auth-service
+      SERVICE_PORT: 8001
+    depends_on:
+      consul:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - leave-mgmt-net
 
-  # leave-balance-service:
-  #   build:
-  #     context: .
-  #     dockerfile: leave_balance_service/Dockerfile
-  #   container_name: leave-mgmt-leave-balance-service
-  #   env_file: .env
-  #   environment:
-  #     SERVICE_NAME: leave-balance-service
-  #     SERVICE_HOST: leave-balance-service
-  #     SERVICE_PORT: 8002
-  #   depends_on:
-  #     consul:
-  #       condition: service_healthy
-  #     rabbitmq:
-  #       condition: service_healthy
-  #   networks:
-  #     - leave-mgmt-net
+  leave-balance-service:
+    build:
+      context: .
+      dockerfile: leave_balance_service/Dockerfile
+    container_name: leave-mgmt-leave-balance-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: leave-balance-service
+      SERVICE_HOST: leave-balance-service
+      SERVICE_PORT: 8002
+    depends_on:
+      consul:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - leave-mgmt-net
 
-  # leave-request-service:
-  #   build:
-  #     context: .
-  #     dockerfile: leave_request_service/Dockerfile
-  #   container_name: leave-mgmt-leave-request-service
-  #   env_file: .env
-  #   environment:
-  #     SERVICE_NAME: leave-request-service
-  #     SERVICE_HOST: leave-request-service
-  #     SERVICE_PORT: 8003
-  #   depends_on:
-  #     consul:
-  #       condition: service_healthy
-  #     rabbitmq:
-  #       condition: service_healthy
-  #   networks:
-  #     - leave-mgmt-net
+  leave-request-service:
+    build:
+      context: .
+      dockerfile: leave_request_service/Dockerfile
+    container_name: leave-mgmt-leave-request-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: leave-request-service
+      SERVICE_HOST: leave-request-service
+      SERVICE_PORT: 8003
+    depends_on:
+      consul:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      leave-balance-service:
+        condition: service_started
+    networks:
+      - leave-mgmt-net
 
-  # manager-service:
-  #   build:
-  #     context: .
-  #     dockerfile: manager_service/Dockerfile
-  #   container_name: leave-mgmt-manager-service
-  #   env_file: .env
-  #   environment:
-  #     SERVICE_NAME: manager-service
-  #     SERVICE_HOST: manager-service
-  #     SERVICE_PORT: 8004
-  #   depends_on:
-  #     consul:
-  #       condition: service_healthy
-  #     rabbitmq:
-  #       condition: service_healthy
-  #   networks:
-  #     - leave-mgmt-net
+  manager-service:
+    build:
+      context: .
+      dockerfile: manager_service/Dockerfile
+    container_name: leave-mgmt-manager-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: manager-service
+      SERVICE_HOST: manager-service
+      SERVICE_PORT: 8004
+    depends_on:
+      consul:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      leave-balance-service:
+        condition: service_started
+      leave-request-service:
+        condition: service_started
+    networks:
+      - leave-mgmt-net
 
-  # notification-service:
+  # notification-service (enabled once its consumer entry point exists):
   #   build:
   #     context: .
   #     dockerfile: notification_service/Dockerfile

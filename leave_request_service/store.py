@@ -14,9 +14,11 @@ chronological.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from leave_request_service.models import LeaveRequest
+from shared.enums import LeaveStatus
 
 requests_store: dict[str, LeaveRequest] = {}
 employee_requests_index: dict[str, list[str]] = {}
@@ -57,3 +59,23 @@ def get_requests_for_manager(manager_id: str) -> list[LeaveRequest]:
         requests_store[request_id]
         for request_id in manager_requests_index.get(manager_id, [])
     ]
+
+
+def set_status(
+    request: LeaveRequest,
+    new_status: LeaveStatus,
+    rejection_reason: Optional[str] = None,
+) -> LeaveRequest:
+    """Transition a request to ``new_status`` and stamp ``updated_at``.
+
+    ``rejection_reason`` is recorded only for rejections; any prior reason is
+    cleared on other transitions so the field always reflects the current
+    state.
+    """
+
+    request.status = new_status
+    request.rejection_reason = (
+        rejection_reason if new_status == LeaveStatus.REJECTED else None
+    )
+    request.updated_at = datetime.now(timezone.utc)
+    return request

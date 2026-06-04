@@ -1,0 +1,44 @@
+# Keep the build context small and reproducible. The repo root is the build
+# context for every service image (so `shared/` is always available), which
+# makes excluding local-only and heavy paths important.
+
+# Local virtualenv / interpreter
+.venv/
+venv/
+env/
+.Python
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Secrets (provided at runtime via env_file, never baked into the image)
+.env
+.env.local
+.env.*.local
+
+# Version control / IDE / OS
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Tests / coverage / build artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Cursor
+.cursor/
+
+# Docs / compose are not needed inside service images
+docker-compose.yml
+README.md
+*.log
