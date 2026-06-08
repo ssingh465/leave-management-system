@@ -10,9 +10,9 @@ The system is fully containerised and ships with a single `docker-compose.yml`
 that brings up all eight containers (Consul + RabbitMQ + six services) on one
 shared network.
 
-> Demo video: `<paste your video URL here>`
+> Demo video: `https://github.com/ssingh465/leave-management-system`
 >
-> Repository: `<paste your GitHub URL here>`
+> Repository: `https://nagarro-my.sharepoint.com/:v:/r/personal/shubhanshu_singh_nagarro_com/Documents/Recordings/NAGP%20%E2%80%93%20Microservices%20Assignment%20Demo%20%2008%20Jun%202026-20260608_224157-Meeting%20Recording.mp4?csf=1&web=1&e=cnrGn5&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D`
 
 ---
 

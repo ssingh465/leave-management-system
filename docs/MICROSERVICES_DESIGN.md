@@ -22,66 +22,36 @@ resolves downstream hosts through it on every forwarded request.
 
 ### 1.1 Architecture diagram
 
-```
-                                ┌──────────────────┐
-                                │  Postman Client  │
-                                └────────┬─────────┘
-                                         │ HTTP :8080
-                                         ▼
-                       ┌─────────────────────────────────────┐
-                       │            API Gateway              │
-                       │  - JWT validation (HS256)           │
-                       │  - Access logging                   │
-                       │  - Consul-resolved forwarding       │
-                       └─┬──────────┬──────────┬─────────────┘
-                         │          │          │
-              ┌──────────┘    ┌─────┘     ┌────┘
-              ▼               ▼            ▼
-   ┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
-   │   Auth Service   │ │ Leave Balance│ │  Leave Request   │
-   │  POST /auth/login│ │  GET /me/... │ │  POST /leaves    │
-   │  HS256 + BCrypt  │ │  GET /{id}/..│ │  GET /history    │
-   │                  │ │  POST /int/  │ │  PATCH /cancel   │
-   │                  │ │     deduct   │ │  GET /int/req    │
-   │                  │ │              │ │  POST /int/status│
-   └──────────────────┘ └─────▲────────┘ └─────▲────────────┘
-                              │                │
-                              │  httpx +       │  httpx +
-                              │  pybreaker     │  pybreaker
-                              │                │
-                              └──────────┬─────┘
-                                         │
-                              ┌──────────┴─────────┐
-                              │   Manager Service  │
-                              │   GET   /requests  │
-                              │   POST  /approve   │
-                              │   POST  /reject    │
-                              │  (no state of own) │
-                              └──────────┬─────────┘
-                                         │
-       LEAVE_APPLIED / APPROVED / REJECTED / SYSTEM_ERROR
-       (publish from Request + Manager + global handler)
-                                         │
-                                         ▼
-                              ┌────────────────────┐                ┌────────────────┐
-                              │  RabbitMQ (5672)   │ ─────────────► │  Notification  │
-                              │  exchange: notif-* │   aio-pika     │  Service       │
-                              └────────────────────┘   consumer     │  (4 templates) │
-                                                                    └────────────────┘
-
-   Every application service:   ── register / deregister ── ►   ┌──────────────────┐
-                                                                │ Consul (8500)    │
-   API Gateway:                  ◄── resolve service host ─     │ Service registry │
-                                                                └──────────────────┘
-
-   (opt-in via `--profile elk`)
-                       ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-   container stdout ─► │ Filebeat │ ─► │ Logstash │ ─► │  Elastic │ ─► │  Kibana  │
-   (JSON per line)     │  (5044)  │    │ pipeline │    │  search  │    │ (5601)   │
-                       └──────────┘    └──────────┘    └──────────┘    └──────────┘
+```mermaid
+flowchart LR
+  Client[Postman Client] --> GW[API Gateway :8080]
+  GW --> Auth[Auth Service :8001]
+  GW --> Bal[Leave Balance :8002]
+  GW --> Req[Leave Request :8003]
+  GW --> Mgr[Manager :8004]
+  Req -->|"check balance (httpx + breaker)"| Bal
+  Mgr -->|"deduct (httpx + breaker)"| Bal
+  Mgr -->|"read / update status"| Req
+  Req -->|publish| MQ[(RabbitMQ :5672)]
+  Mgr -->|publish| MQ
+  MQ --> Notif[Notification :8005]
+  Auth -. register .-> Consul[(Consul :8500)]
+  Bal -. register .-> Consul
+  Req -. register .-> Consul
+  Mgr -. register .-> Consul
+  Notif -. register .-> Consul
+  GW -. resolve .-> Consul
 ```
 
-A mermaid version of the same diagram is rendered in the root `README.md`.
+Optional ELK stack (enabled with `docker-compose --profile elk`):
+
+```mermaid
+flowchart LR
+  App[Container stdout JSON logs] --> FB[Filebeat]
+  FB --> LS[Logstash :5044]
+  LS --> ES[(Elasticsearch :9200)]
+  ES --> KB[Kibana :5601]
+```
 
 ### 1.2 Container topology
 
