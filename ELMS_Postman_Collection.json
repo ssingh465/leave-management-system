@@ -949,7 +949,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('409 Conflict (overlap)', function () { pm.response.to.have.status(409); });",
-                  "pm.expect(pm.response.json().detail).to.match(/overlap/i);"
+                  "pm.expect(pm.response.json().detail).to.match(/already exists/i);"
                 ]
               }
             }
@@ -2254,7 +2254,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-                  "pm.expect(pm.response.json().status).to.eql('ok');"
+                  "pm.expect(pm.response.json().status).to.eql('healthy');"
                 ]
               }
             }

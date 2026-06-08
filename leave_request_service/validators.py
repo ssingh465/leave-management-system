@@ -66,7 +66,7 @@ def check_overlap(employee_id: str, start_date: date, end_date: date) -> None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    "Requested dates overlap an existing leave request "
-                    f"({existing.start_date} to {existing.end_date})"
+                    f"A {existing.status.value} leave request already exists "
+                    f"for dates {existing.start_date} to {existing.end_date}"
                 ),
             )

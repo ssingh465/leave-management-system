@@ -1,0 +1,34 @@
+# =============================================================================
+# Filebeat config for ELMS
+# -----------------------------------------------------------------------------
+# Filebeat runs as a sidecar container and discovers other containers via the
+# Docker daemon socket. For each one, it tails the json-file logs Docker writes
+# under /var/lib/docker/containers and forwards them to Logstash. The Python
+# services already emit JSON lines on stdout, so Logstash handles the JSON
+# decode (see elk/logstash/pipeline/logstash.conf).
+# =============================================================================
+
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      hints.enabled: true
+      hints.default_config:
+        type: container
+        paths:
+          - /var/lib/docker/containers/${data.container.id}/*.log
+
+processors:
+  # Drop Filebeat's own logs to avoid a feedback loop.
+  - drop_event:
+      when:
+        equals:
+          container.image.name: docker.elastic.co/beats/filebeat:8.13.4
+  # Enrich every event with Docker container metadata (name, image, labels).
+  - add_docker_metadata: ~
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+logging.level: info
+logging.to_files: false
+logging.to_stderr: true

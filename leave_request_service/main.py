@@ -43,14 +43,12 @@ from shared.config import settings
 from shared.consul_client import deregister_service, register_service
 from shared.enums import LeaveStatus, NotificationEventType
 from shared.exception_handlers import register_global_exception_handler
+from shared.logging_config import configure_logging
 from shared.rabbitmq_publisher import publish_event
 from shared.seed_config import get_manager_id
 from shared.tracing import init_tracing, instrument_fastapi, instrument_httpx
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+configure_logging(settings.service_name)
 logger = logging.getLogger("leave_request_service")
 
 _UPSTREAM_TIMEOUT_SECONDS = 5.0
@@ -339,4 +337,4 @@ async def update_request_status(
 async def health() -> dict[str, str]:
     """Liveness probe (public)."""
 
-    return {"status": "ok", "service": "leave-request-service"}
+    return {"status": "healthy", "service": "leave-request-service"}

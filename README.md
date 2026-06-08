@@ -29,8 +29,10 @@ shared network.
 9. [Docker Hub images](#docker-hub-images)
 10. [Building and pushing images](#building-and-pushing-images)
 11. [Operational notes](#operational-notes)
-12. [Project layout](#project-layout)
-13. [Troubleshooting](#troubleshooting)
+12. [Observability: ELK stack](#observability-elk-stack)
+13. [Documentation](#documentation)
+14. [Project layout](#project-layout)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -104,7 +106,7 @@ runs inside containers.
 
 ```bash
 # 1. Clone
-git clone <your-repo-url> elms && cd elms
+git clone
 
 # 2. Provision local environment file
 cp .env.example .env
@@ -302,6 +304,58 @@ docker-compose pull
 docker-compose up
 ```
 
+## Observability: ELK stack
+
+Every service emits **structured JSON log lines** on stdout via
+`shared/logging_config.py`:
+
+```json
+{"timestamp":"2026-06-04T12:34:56.789Z","level":"INFO","logger":"leave_request_service","service":"leave-request-service","message":"Leave request <id> created for employee <id> (CASUAL, 3 day(s))"}
+```
+
+The base 8-container stack does **not** require ELK - those JSON lines are
+already searchable with `docker-compose logs <service>` and easy to pipe into
+`jq`. The ELK stack adds proper indexed search on top.
+
+### Starting the ELK stack (opt-in via a compose profile)
+
+```bash
+docker-compose --profile elk up --build
+```
+
+This adds four containers alongside the existing eight:
+
+| Container             | Port | Role                                                                                                |
+| --------------------- | ---- | --------------------------------------------------------------------------------------------------- |
+| `leave-mgmt-elasticsearch` | 9200 | Single-node Elasticsearch (security disabled for the demo)                                     |
+| `leave-mgmt-logstash`      | 5044 | Beats input -> JSON decode (`elk/logstash/pipeline/logstash.conf`) -> Elasticsearch              |
+| `leave-mgmt-kibana`        | 5601 | UI; index pattern `elms-logs-*`                                                                  |
+| `leave-mgmt-filebeat`      | -    | Reads `/var/lib/docker/containers/*.log` via the Docker socket and ships to Logstash             |
+
+Filebeat tails Docker's per-container log files (the JSON line each Python
+service writes is the `message` field on Docker's side), forwards them to
+Logstash, which decodes `message` as JSON and indexes the resulting fields
+into Elasticsearch. Kibana on port 5601 shows them via Discover.
+
+Without the `--profile elk` flag the four ELK containers are not started; the
+default `docker-compose up` is untouched.
+
+### Stopping the ELK stack
+
+```bash
+docker-compose --profile elk down            # stop everything (app + ELK)
+docker-compose --profile elk down --volumes  # also discard the Elasticsearch indices
+```
+
+## Documentation
+
+Every long-form deliverable lives under `docs/`:
+
+| Document                                                                       | What's in it                                                                            |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| [`docs/MICROSERVICES_DESIGN.md`](docs/MICROSERVICES_DESIGN.md)                  | Architecture overview, container topology, service responsibilities, data ownership     |
+| [`docs/INTER_SERVICE_COMMUNICATION.md`](docs/INTER_SERVICE_COMMUNICATION.md)    | Every HTTP edge, the RabbitMQ event flow, Consul registration/resolution, the breakers  |
+
 ## Operational notes
 
 - **Cold start order.** `consul` and `rabbitmq` come up first (with
@@ -333,17 +387,25 @@ docker-compose up
 ├── manager_service/         # Team view + approve / reject orchestration
 ├── notification_service/    # aio-pika consumer + 4 log templates
 ├── shared/                  # Code reused by every service
+│   ├── auth_context.py
 │   ├── circuit_breakers.py
 │   ├── config.py
 │   ├── consul_client.py
 │   ├── enums.py
 │   ├── exception_handlers.py
 │   ├── jwt_utils.py
+│   ├── logging_config.py       # JSON structured logs to stdout
 │   ├── rabbitmq_publisher.py
 │   ├── seed_config.py
 │   ├── service_client.py
 │   └── tracing.py
-├── docker-compose.yml       # 8 containers, shared `leave-mgmt-net` network
+├── docs/                    # Long-form deliverables
+│   ├── MICROSERVICES_DESIGN.md
+│   └── INTER_SERVICE_COMMUNICATION.md
+├── elk/                     # ELK stack (opt-in via `--profile elk`)
+│   ├── logstash/pipeline/logstash.conf
+│   └── filebeat/filebeat.yml
+├── docker-compose.yml       # 8 default containers + 4 ELK (profile-gated)
 ├── .env / .env.example      # Environment variables (see above)
 ├── .dockerignore            # Keeps build context lean
 ├── ELMS_Postman_Collection.json
@@ -367,8 +429,3 @@ is always on the path) using its own `Dockerfile`; the compose file pins
 | Postman runs but every assert fails                                  | Wrong `base_url` collection variable                      | Open the collection variables tab - it should be `http://localhost:8080`.                    |
 
 ---
-
-Built as part of the ELMS coursework; see `ELMS_PRD_v2.0.docx`,
-`ELMS_TRD_v1.0.docx`, `ELMS_Schema_v1.0.docx`, and
-`ELMS_Implementation_Plan_v1.0.docx` in the repo root for the full
-requirements, technical design, schema, and implementation plan.

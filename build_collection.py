@@ -388,7 +388,7 @@ def folder_apply() -> dict:
                 }),
                 test_lines=[
                     "pm.test('409 Conflict (overlap)', function () { pm.response.to.have.status(409); });",
-                    "pm.expect(pm.response.json().detail).to.match(/overlap/i);",
+                    "pm.expect(pm.response.json().detail).to.match(/already exists/i);",
                 ],
             ),
             request(
@@ -907,7 +907,7 @@ def folder_cross_cutting() -> dict:
                 url_path="/health",
                 test_lines=[
                     "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-                    "pm.expect(pm.response.json().status).to.eql('ok');",
+                    "pm.expect(pm.response.json().status).to.eql('healthy');",
                 ],
             ),
             request(

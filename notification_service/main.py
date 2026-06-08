@@ -17,12 +17,10 @@ from notification_service.consumer import run_consumer
 from shared.config import settings
 from shared.consul_client import deregister_service, register_service
 from shared.exception_handlers import register_global_exception_handler
+from shared.logging_config import configure_logging
 from shared.tracing import init_tracing, instrument_fastapi
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+configure_logging(settings.service_name)
 logger = logging.getLogger("notification_service")
 
 
@@ -55,4 +53,4 @@ instrument_fastapi(app)
 async def health() -> dict[str, str]:
     """Liveness probe (public)."""
 
-    return {"status": "ok", "service": "notification-service"}
+    return {"status": "healthy", "service": "notification-service"}

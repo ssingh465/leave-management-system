@@ -27,13 +27,11 @@ from shared.config import settings
 from shared.consul_client import deregister_service, register_service
 from shared.enums import Role
 from shared.exception_handlers import register_global_exception_handler
+from shared.logging_config import configure_logging
 from shared.seed_config import is_team_member
 from shared.tracing import init_tracing, instrument_fastapi
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+configure_logging(settings.service_name)
 logger = logging.getLogger("leave_balance_service")
 
 
@@ -141,4 +139,4 @@ async def deduct_balance(payload: DeductRequest) -> DeductResponse:
 async def health() -> dict[str, str]:
     """Liveness probe (public)."""
 
-    return {"status": "ok", "service": "leave-balance-service"}
+    return {"status": "healthy", "service": "leave-balance-service"}

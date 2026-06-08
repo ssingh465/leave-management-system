@@ -11,9 +11,10 @@
 # in `.env`; defaults keep the file usable without any environment overrides.
 #
 # Usage:
-#     docker-compose up consul rabbitmq      # infrastructure only
-#     docker-compose up --build              # build from source and run
-#     docker-compose pull && docker-compose up   # pull from Docker Hub and run
+#     docker-compose up consul rabbitmq                 # infrastructure only
+#     docker-compose up --build                          # build from source and run
+#     docker-compose pull && docker-compose up           # pull from Docker Hub and run
+#     docker-compose --profile elk up --build            # start the ELK stack
 # ============================================================================
 
 services:
@@ -184,6 +185,81 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    networks:
+      - leave-mgmt-net
+
+  # --------------------------------------------------------------------------
+  # ELK stack (opt-in via `--profile elk`)
+  # --------------------------------------------------------------------------
+  # Enable with:  docker-compose --profile elk up --build
+  # The four services below sit on the same `leave-mgmt-net` network as the
+  # application services. Filebeat tails Docker container logs (which are
+  # already JSON, thanks to shared/logging_config.py), Logstash decodes the
+  # message field, Elasticsearch stores the events, and Kibana (port 5601)
+  # provides the UI. The base 8-container stack is unaffected when the profile
+  # is not selected.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: leave-mgmt-elasticsearch
+    profiles: ["elk"]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - leave-mgmt-net
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.4
+    container_name: leave-mgmt-logstash
+    profiles: ["elk"]
+    environment:
+      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
+      xpack.monitoring.enabled: "false"
+    volumes:
+      - ./elk/logstash/pipeline:/usr/share/logstash/pipeline:ro
+    ports:
+      - "5044:5044"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - leave-mgmt-net
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.4
+    container_name: leave-mgmt-kibana
+    profiles: ["elk"]
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - leave-mgmt-net
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.13.4
+    container_name: leave-mgmt-filebeat
+    profiles: ["elk"]
+    user: root
+    command: ["-e", "-strict.perms=false"]
+    volumes:
+      - ./elk/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      logstash:
+        condition: service_started
     networks:
       - leave-mgmt-net
 
